@@ -108,7 +108,7 @@ make && cd ..
 ```
 From the vertex_enumeration root directory:
 ```bash
-./build/qhull_lib_test
+./build/vertex_enumeration
 ```
 
 This executes the example in `src/main.cpp`, which defines a 16-constraint polytope in $\mathbb{R}^3$ with an interior seed at $(5.0, 11.0, 0.5)$, runs `VertexEnum::con2vert` to enumerate its vertices, and uses `VertexEnum::computeMesh` to triangulate the convex hull and compute the polytope volume.
