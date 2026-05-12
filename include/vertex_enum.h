@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <Eigen/Dense>
 #include <stdexcept>
+#include <cdd/setoper.h>
+#include <cdd/cdd.h>
 
 #include "libqhullcpp/Qhull.h"
 #include "libqhullcpp/QhullPoint.h"
@@ -18,10 +20,10 @@
 
 using namespace std;
 
-namespace VertexEnum {
+namespace VertexEnumCDD {
 
     /**
-     * @brief Converts constraints to vertices of a polytope using the dual Qhull method.
+     * @brief Converts constraints to vertices of a polytope using the double description method.
      * 
      * Given a polytope defined by linear constraints A*x <= b, this function computes
      * the vertices of the polytope using convex hull computation on the dual space.
@@ -30,52 +32,68 @@ namespace VertexEnum {
      * @tparam dim Dimension of the polytope (compile-time constant)
      * @param A_column_major Matrix of constraint coefficients (column-major format), shape: (m, dim)
      * @param b Vector of constraint bounds, shape: (m, 1)
-     * @param seed A feasible point inside the polytope (must satisfy A*seed < b), shape: (dim, 1)
      * @param Vertices Output vector to store computed vertices of the polytope
-     */
+     */    
     template <typename T, int dim>
     inline void con2vert(const Eigen::Matrix<T, -1, dim> &A_column_major, 
-                         const Eigen::Matrix<T, -1, 1> &b, 
-                         const Eigen::Matrix<T, dim, 1> &seed, 
-                         std::vector<Eigen::Matrix<T, dim, 1>> &Vertices) {
+                            const Eigen::Matrix<T, -1, 1> &b,
+                            std::vector<Eigen::Matrix<T, dim, 1>> &Vertices) {
         Eigen::Matrix<T, -1, dim, Eigen::RowMajor> A = A_column_major;
 
-        // Ensure matrix dimensions are compatible
-        if(A.rows() != b.size()) {
-            throw std::invalid_argument("A and b dimensions do not match.\n");
-        }
+        // 1. Initialize cdd
+        dd_set_global_constants();
 
-        // Adjust b by subtracting A * seed
-        Eigen::Matrix<T, -1, 1> b_adjusted = b - A * seed;
+        // 2. Prepare H-representation matrix
+        long n_constraints = A.rows();
+        dd_MatrixPtr H = dd_CreateMatrix(n_constraints, dim + 1);
+                        
+        H->representation = dd_Inequality;
+        H->numbtype = dd_Real;
 
-        // Normalize A by dividing rows by the corresponding elements of b
-        Eigen::Matrix<T, -1, -1, Eigen::RowMajor> D = A.array().colwise() / b_adjusted.array();
-
-        // 1. Initialize Qhull
-        orgQhull::Qhull qhull;
-
-        // "Qt" = triangulated output, "n" = compute normals
-        qhull.runQhull("", dim, D.rows(), D.data(), "Qt n");        
-
-        // Step 6: Extract vertices from the dual (which are facets in primal)
-        // Each facet of the convex hull corresponds to a vertex of the polytope
-        orgQhull::QhullFacetList facets = qhull.facetList();
-
-        for(auto facet = facets.begin(); facet != facets.end(); ++facet) {
-            // Get the hyperplane equation of this facet: n·x + offset = 0
-            orgQhull::QhullHyperplane hyperplane = facet->hyperplane();
-            T offset = hyperplane.offset();
-
-            // The vertex in the primal is at: -n / offset + seed
-            Eigen::Matrix<T, dim, 1> vertex;
-            for(int j = 0; j < dim; ++j) {
-                vertex(j) = -hyperplane[j] / offset + seed(j);
+        for (long i = 0; i < n_constraints; ++i) {
+            dd_set_d(H->matrix[i][0], (double)b(i));
+            for (long j = 0; j < dim; ++j) {
+                dd_set_d(H->matrix[i][j + 1], (double)(-A(i, j)));
             }
-
-            Vertices.push_back(vertex);
         }
 
-    }
+        // 3. Convert H-rep to Polyhedron Object
+        dd_ErrorType err;
+        dd_PolyhedraPtr poly = dd_DDMatrix2Poly(H, &err);
+
+        if (err != dd_NoError || poly == NULL) {
+            if (H) dd_FreeMatrix(H);
+            return;
+        }
+
+        // 4. Extract Generator Matrix (Vertices/Rays) from Polyhedron
+        // This is the missing step that caused your error
+        dd_MatrixPtr G = dd_CopyGenerators(poly);
+
+        // 5. Extract Vertices
+        Vertices.clear();
+        for (long i = 0; i < G->rowsize; ++i) {
+            double type_indicator = dd_get_d(G->matrix[i][0]);
+
+            // type_indicator: 1.0 = Vertex, 0.0 = Ray
+            if (std::abs(type_indicator) > 1e-6) {
+                Eigen::Matrix<T, dim, 1> vertex;
+                for (long j = 0; j < dim; ++j) {
+                    double val = dd_get_d(G->matrix[i][j + 1]);
+                    vertex(j) = (T)(val / type_indicator); 
+                }
+                Vertices.push_back(vertex);
+            }
+        }
+
+        // 6. Cleanup
+        // Note: You must free the Generator matrix, the Polyhedron, and the Input matrix
+        dd_FreeMatrix(H);
+        dd_FreeMatrix(G);
+        dd_FreePolyhedra(poly);
+        dd_free_global_constants();
+    }    
+
 
 
     /**
@@ -90,10 +108,10 @@ namespace VertexEnum {
      * @param vertices Input vector of polytope vertices, shape: (num_vertices, dim)
      * @param mesh Output vector of mesh facets, where each facet is a vector of vertices
      * @return The volume of the polytope
-     */
+     */    
     template <typename T, int dim>
     inline T computeMesh(const std::vector<Eigen::Matrix<T, dim, 1>> &vertices,
-                            std::vector<std::vector<Eigen::Matrix<T, dim, 1>>> &mesh) {
+                         std::vector<std::vector<Eigen::Matrix<T, dim, 1>>> &mesh) {
         static_assert(dim == 2 || dim == 3, "Dimension must be 2 or 3");
 
         int num_points = vertices.size();
@@ -133,8 +151,7 @@ namespace VertexEnum {
         return volume;
     }
 
-
-}
+} // namespace VertexEnumCDD
 
 
 #endif // VERTEX_ENUM_H

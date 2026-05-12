@@ -5,6 +5,7 @@
 
 using namespace std;
 
+
 int main() {
     
     Eigen::Matrix<double, -1, -1> A(16, 3);
@@ -26,17 +27,18 @@ int main() {
                   -0,          -1,          -0,
                   -0,          -0,          -1;
     b << -8.26957, -8.31089, 12.0239, 11.9977, 11.8841, 11.6213, 11.6429, 11.5348, 11.4999, 2.87184, 20, 20, 1, 0, 0, 0;
-    Eigen::Vector3d seed = Eigen::Vector3d(5.0, 11.0, 0.5); // seed satisfies A*seed < b
+
+    Eigen::Vector3d seed = Eigen::Vector3d(5.0, 11.0, 0.5);
 
 
     std::vector<Eigen::Vector3d> vertices;
     std::vector<std::vector<Eigen::Vector3d>> mesh;
 
     // Compute vertices of the polytope defined by A and b using the con2vert function
-    VertexEnum::con2vert<double, 3>(A, b, seed, vertices);
+    VertexEnumCDD::con2vert<double, 3>(A, b, vertices);
 
     // Compute the volume of the polytope and its mesh facets using the computeMesh function
-    double volume = VertexEnum::computeMesh<double, 3>(vertices, mesh);
+    double volume = VertexEnumCDD::computeMesh<double, 3>(vertices, mesh);
     
     cout << "Vertices:\n";
     for (const auto& vertex : vertices) {
@@ -44,12 +46,13 @@ int main() {
     }
 
     cout << "Volume of Polytope: " << volume << "\n";
-    cout << "Done!\n";
 
     std::ofstream outfile("../scripts/vertices.txt");
     for (const auto& v : vertices) {
         outfile << v.x() << "," << v.y() << "," << v.z() << "\n";
     }
     outfile.close();
+
+    cout << "Done!\n";
 
 }
